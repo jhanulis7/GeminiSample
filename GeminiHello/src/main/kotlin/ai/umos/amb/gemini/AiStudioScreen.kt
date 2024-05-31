@@ -37,30 +37,17 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 
-val images = arrayOf(
-    // Image generated using Gemini from the prompt "cupcake image"
-    R.drawable.baked_goods_1,
-    // Image generated using Gemini from the prompt "cookies images"
-    R.drawable.baked_goods_2,
-    // Image generated using Gemini from the prompt "cake images"
-    R.drawable.baked_goods_3,
-)
-val imageDescriptions = arrayOf(
-    R.string.image1_description,
-    R.string.image2_description,
-    R.string.image3_description,
-)
 
 @Composable
-fun BakingScreen(
-    bakingViewModel: BakingViewModel = viewModel()
+fun AiStudioScreen(
+    aiStudioViewModel: AiStudioViewModel = viewModel()
 ) {
     val selectedImage = remember { mutableIntStateOf(0) }
     val placeholderPrompt = stringResource(R.string.prompt_placeholder)
     val placeholderResult = stringResource(R.string.results_placeholder)
     var prompt by rememberSaveable { mutableStateOf(placeholderPrompt) }
     var result by rememberSaveable { mutableStateOf(placeholderResult) }
-    val uiState by bakingViewModel.uiState.collectAsState()
+    val uiState by aiStudioViewModel.uiState.collectAsState()
     val context = LocalContext.current
 
     Column(
@@ -113,7 +100,7 @@ fun BakingScreen(
                         context.resources,
                         images[selectedImage.intValue]
                     )
-                    bakingViewModel.sendPrompt(bitmap, prompt)
+                    aiStudioViewModel.sendPrompt(bitmap, prompt)
                 },
                 enabled = prompt.isNotEmpty(),
                 modifier = Modifier
@@ -127,7 +114,7 @@ fun BakingScreen(
                         context.resources,
                         images[selectedImage.intValue]
                     )
-                    bakingViewModel.sendPromptStream(bitmap, prompt)
+                    aiStudioViewModel.sendPromptStream(bitmap, prompt)
                 },
                 enabled = prompt.isNotEmpty(),
                 modifier = Modifier

@@ -18,6 +18,7 @@ class BakingViewModel : ViewModel() {
         _uiState.asStateFlow()
 
     private val generativeModel = GenerativeModel(
+        //modelName = "gemini-1.5-pro",
         modelName = "gemini-pro-vision",
         apiKey = BuildConfig.apiKey
     )
@@ -43,5 +44,30 @@ class BakingViewModel : ViewModel() {
                 _uiState.value = UiState.Error(e.localizedMessage ?: "")
             }
         }
+    }
+
+    fun sendPromptStream(
+        bitmap: Bitmap,
+        prompt: String
+    ) {
+        var outputContent = ""
+        val inputContent = content {
+            image(bitmap)
+            text(prompt)
+        }
+        _uiState.value = UiState.Loading
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                generativeModel.generateContentStream(inputContent)
+                    .collect { response ->
+                        outputContent += response.text
+                        _uiState.value = UiState.Success(outputContent)
+                    }
+            } catch (e: Exception) {
+                _uiState.value = UiState.Error(e.localizedMessage ?: "")
+            }
+        }
+
     }
 }
