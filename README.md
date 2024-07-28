@@ -1,4 +1,5 @@
 # GeminiSample
+Google Ai Gemini Sample App
 
 ## GeminiHello
 - Android Studio Koala | 2024.1.1 Beta 2
