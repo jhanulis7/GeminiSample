@@ -1,12 +1,21 @@
-package ai.umos.amb.gemini
+package ai.umos.ambientai.kotlin
 
+import ai.umos.ambientai.ui.event.SystemEvent
+import dagger.hilt.android.testing.HiltTestApplication
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOf
@@ -21,14 +30,22 @@ import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.zip
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runTest
-import org.junit.Before
+import kotlinx.coroutines.yield
 import org.junit.Test
+import org.robolectric.annotation.Config
+import kotlin.coroutines.cancellation.CancellationException
 
+@Config(application = HiltTestApplication::class, manifest = Config.NONE)
 class KotlinV2 {
-    @Before
-    fun setup() {
-    }
+    private var _isSleepingState = MutableStateFlow(true)
+    private val isSleepingState = _isSleepingState.asStateFlow()
+
+    private var _uiStateSystemEvent = MutableStateFlow(SystemEvent.None)
+    private val uiStateSystemEvent = _uiStateSystemEvent.asStateFlow()
 
     @Test
     fun mapTest() = runTest {
@@ -49,16 +66,17 @@ class KotlinV2 {
             .onCompletion {
                 println("onCompletion: $it")
             }
+            // flow 는 cold stream 이므로 collect 해야 emit 발생됨
             .collect {
                 println("collect: $it")
             }
     }
 
     @Test
-    fun mapTest2() = runBlocking {
+    fun mapTest2() = runTest {
         val flow1 = flowOf(1, 2, 3, 4, 5)
 
-        flow1
+        val job = flow1
             .onStart {
                 println("onStart")
             }
@@ -70,47 +88,48 @@ class KotlinV2 {
                 println("map: $it")
                 "map:$it"
             }
+            // flow 는 cold stream 이므로 collect 해야 emit 발생됨. collect 를 사용 하지 않고 launch 시킴
             .launchIn(CoroutineScope(Dispatchers.Default))
-
-        delay(6000)
+        job.join()
+        println("End")
     }
 
-    @Test
-    fun callbackFlowTest() = runBlocking {
-        val stateFlow = getGearState()
-
-        val job = CoroutineScope(Dispatchers.Default).launch {
-            stateFlow.collect { state ->
-                println("Current gear state: $state")
-            }
-        }
-
-        delay(3000)
-        println("Stopping collection")
-        job.cancelAndJoin()
-
-        delay(3000)
-        println("Exiting main")
-    }
-
-    private fun getGearState(): StateFlow<String?> = callbackFlow {
+    private fun getGearState(scope: CoroutineScope): StateFlow<String?> = callbackFlow {
         val gear = "gear"
         println("Initializing callbackFlow")
 
         trySend("gear: $gear").isSuccess
 
-        // 콜백 해제 및 플로우 종료 처리 (job.cancelAndJoin())
         awaitClose {
             println("Cleaning up resources in awaitClose")
         }
     }.stateIn(
-        scope = CoroutineScope(Dispatchers.Default), // CoroutineScope 사용
-        started = SharingStarted.WhileSubscribed(1000), // 구독 중일 때만 활성화
-        initialValue = "Initial Value" // 초기값 설정
+        scope = scope,
+        started = SharingStarted.Eagerly, // 즉시 시작하도록 변경
+        initialValue = "Initial Value"
     )
 
     @Test
-    fun combineFlowTest() = runBlocking {
+    fun callbackFlowTest() = runTest {
+        // 테스트용 스코프 생성
+        val testScope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val stateFlow = getGearState(testScope)
+
+        val job = testScope.launch {
+            stateFlow.collect { state ->
+                println("Current gear state: $state")
+            }
+        }
+
+        // 구독 취소 및 awaitClose 호출
+        println("Stopping collection")
+        job.cancelAndJoin()
+        println("End")
+        testScope.cancel() // 스코프 취소
+    }
+
+    @Test
+    fun combineFlowTest() = runTest {
         val flow1 = flowOf(1, 2, 3, 4, 5)
         val flow2 = flowOf("A", "B", "C", "D", "E")
 
@@ -123,7 +142,7 @@ class KotlinV2 {
     }
 
     @Test
-    fun combineFlowTest2() = runBlocking {
+    fun combineFlowTest2() = runTest {
         val flow1 = flowOf(1, 2, 3, 4, 5)
         val flow2 = flowOf("A", "B", "C", "D", "E")
             .onEach { delay(1000) }
@@ -137,22 +156,21 @@ class KotlinV2 {
     }
 
     @Test
-    fun combineFlowTest3() = runBlocking {
+    fun combineFlowTest3() = runTest {
         val flow1 = flowOf(1, 2, 3, 4, 5)
         val flow2 = flowOf("A", "B", "C", "D", "E")
             .onEach { delay(1000) }
 
-        flow1.combine(flow2) { num, str ->
+        val job = flow1.combine(flow2) { num, str ->
             println("$num$str") // launchIn collect 후 delay 만큼 출력(5A, 5B, 5C)
             "$num$str"
         }.launchIn(CoroutineScope(Dispatchers.Default)) // launchIn 은 별도의 코루틴
 
-        // launchIn 이 별도의 코루틴으로 비동기 돌아서 combineFlowTest3 종료되므로 delay 필요
-        delay(3000) // 사용하지 않으려면 Test2 사용, collect 해서 다 방출될때가지 runblocking
+        job.join()
     }
 
     @Test
-    fun combineFlowTest4(): Unit = runBlocking {
+    fun combineFlowTest4(): Unit = runTest {
         val flow1 = flowOf(1, 2, 3, 4, 5)
         val flow2 = flowOf("A", "B", "C", "D", "E")
             .onEach { delay(1000) }
@@ -168,7 +186,7 @@ class KotlinV2 {
     }
 
     @Test
-    fun zipFlowTest() = runBlocking {
+    fun zipFlowTest() = runTest {
         val flow1 = flowOf(1, 2, 3, 4, 5)
         val flow2 = flowOf("A", "B", "C", "D", "E")
 
@@ -181,7 +199,7 @@ class KotlinV2 {
     }
 
     @Test
-    fun zipFlowTest2() = runBlocking {
+    fun zipFlowTest2() = runTest {
         val flow1 = flowOf(1, 2, 3, 4, 5)
         val flow2 = flowOf("A", "B", "C", "D", "E")
             .onEach { delay(1000) }
@@ -195,7 +213,7 @@ class KotlinV2 {
     }
 
     @Test
-    fun zipFlowTest3() = runBlocking {
+    fun zipFlowTest3() = runTest {
         val flow1 = flowOf(1, 2, 3, 4, 5)
         val flow2 = flowOf("A", "B", "C", "D", "E", "F")
             .onEach { delay(1000) }
@@ -209,7 +227,7 @@ class KotlinV2 {
     }
 
     @Test
-    fun mergeFlowTest() = runBlocking {
+    fun mergeFlowTest() = runTest {
         val flow1 = flowOf(1, 2, 3, 4, 5)
         val flow2 = flowOf("A", "B", "C", "D", "E", "F")
 
@@ -219,7 +237,7 @@ class KotlinV2 {
     }
 
     @Test
-    fun mergeFlowTest2() = runBlocking {
+    fun mergeFlowTest2() = runTest {
         val flow1 = flowOf(1, 2, 3, 4, 5)
         val flow2 = flowOf("A", "B", "C", "D", "E", "F")
             .onEach { delay(1000) }
@@ -228,5 +246,87 @@ class KotlinV2 {
         merge(flow1, flow2).collect { value ->
             println(value) // 출력: 1, 2, 3, 4, 5, A, B, C, D, E, F (순서보장없음)
         }
+    }
+
+    @Test
+    fun mergeFlowTest3() = runTest {
+        val flow1 = flowOf(1, 2, 3, 4, 5).onEach {
+            delay(1000)
+        }
+        val flow2 = flowOf("A", "B", "C", "D", "E", "F").onEach {
+            delay(500)
+        }
+
+        merge(flow1, flow2).collect { value ->
+            println(value) // 출력: A, 1, B, C, 2, D, E, 3, F, 4, 5
+        }
+    }
+
+    @Test
+    fun collectChangeWindowFlagStateTest_scope() = runTest {
+        val testDispatcher = StandardTestDispatcher(testScheduler)
+        val testScope = CoroutineScope(testDispatcher)
+
+        try {
+            isSleepingState.combine(uiStateSystemEvent) { isSleeping, systemEvent ->
+                println("---> collectChangeWindowFlagState isSleeping : $isSleeping, systemEvent : $systemEvent")
+            }.stateIn(testScope, SharingStarted.Eagerly, true)
+
+            _isSleepingState.value = false
+            _uiStateSystemEvent.value = SystemEvent.GearReverse
+
+            yield()
+            advanceTimeBy(2000)
+        } catch (e: Exception) {
+            println("collectChangeWindowFlagStateTest2 error:${e.stackTraceToString()}")
+        } finally {
+            testScope.cancel()
+        }
+    }
+
+    @Test
+    fun collectChangeWindowFlagStateTest2_scopeCancel() = runTest {
+        val testDispatcher = StandardTestDispatcher(testScheduler)
+        val testScope = CoroutineScope(testDispatcher)
+
+        try {
+            isSleepingState.combine(uiStateSystemEvent) { isSleeping, systemEvent ->
+                println("--> collectChangeWindowFlagState isSleeping : $isSleeping, systemEvent : $systemEvent")
+            }.launchIn(testScope)
+
+            _isSleepingState.value = false
+            _uiStateSystemEvent.value = SystemEvent.GearReverse
+
+            yield()
+            advanceTimeBy(2000)
+        } catch (e: Exception) {
+            println("collectChangeWindowFlagStateTest2 error:${e.stackTraceToString()}")
+        } finally {
+            testScope.cancel()
+        }
+    }
+
+    private suspend fun fetchTest1(): String {
+        println("fetchTest1 Start")
+        delay(1000)
+        println("fetchTest1 End")
+        return "fetchTest1"
+    }
+
+    private suspend fun fetchTest2(): String {
+        println("fetchTest2 Start")
+        delay(2000)
+        println("fetchTest2 End")
+        return "fetchTest2"
+    }
+
+    @Test
+    fun testFlowAsync() = runTest {
+        val deferred1 = async { fetchTest1() }
+        val deferred2 = async { fetchTest2() }
+
+        // 두 결과를 모두 기다림
+        val result = deferred1.await() + deferred2.await()
+        println(result)
     }
 }
